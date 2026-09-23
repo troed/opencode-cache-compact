@@ -9,7 +9,7 @@ An OpenCode plugin for locally hosted models, where prefilling a large context i
 [Install](#-install) · [How it works](#-how-it-works) · [Options](#-options) · [Caveats](#-caveats) · [Develop](#-develop)
 
 [![npm](https://img.shields.io/npm/v/opencode-cache-compact?color=8B5CF6&style=flat-square)](https://www.npmjs.com/package/opencode-cache-compact)
-![tests](https://img.shields.io/badge/tests-14-brightgreen)
+![tests](https://img.shields.io/badge/tests-41-brightgreen)
 ![license](https://img.shields.io/badge/license-MIT-blue)
 
 </div>
@@ -36,7 +36,7 @@ The on-disk session is never modified — only what is sent to the model changes
 
 ## 📦 Install
 
-Requires OpenCode with the `experimental.chat.messages.transform` hook, and a model whose provider reports its context window.
+Requires OpenCode **1.18.29 or newer (V1)** or **V2** — one package ships both entrypoints — and a model whose provider reports its context window.
 
 ### From npm
 
@@ -44,6 +44,19 @@ Requires OpenCode with the `experimental.chat.messages.transform` hook, and a mo
 {
   "plugin": [
     ["opencode-cache-compact", { "threshold": 68 }]
+  ]
+}
+```
+
+### From npm (V2)
+
+```jsonc
+{
+  "plugins": [
+    {
+      "package": "opencode-cache-compact",
+      "options": { "threshold": 68 }
+    }
   ]
 }
 ```
@@ -58,6 +71,22 @@ Requires OpenCode with the `experimental.chat.messages.transform` hook, and a mo
 }
 ```
 
+#### V2 local checkout
+
+V2 loads plugin **directories**, not file paths — point `package` at the checkout
+root (the form the end-to-end test exercises):
+
+```jsonc
+{
+  "plugins": [
+    {
+      "package": "/absolute/path/to/opencode-cache-compact",
+      "options": { "threshold": 68 }
+    }
+  ]
+}
+```
+
 Set `compaction.auto` to `false` if you want this plugin to be the only compaction.
 
 ## ⚙️ Options
@@ -66,14 +95,14 @@ Set `compaction.auto` to `false` if you want this plugin to be the only compacti
 | --- | --- | --- | --- |
 | `threshold` | number | `68` | Percent of the context window used that trips the summary. |
 | `models` | string[] | `[]` (all) | Only act on these `providerID/modelID`s. Use it to scope to your local endpoint. |
-| `summaryPrompt` | string | [see `src/plugin.ts`](src/plugin.ts) | Replace the summary instruction. |
+| `summaryPrompt` | string | [see `src/engine.ts`](src/engine.ts) | Replace the summary instruction. |
 | `summaryMaxTokens` | number | `1200` | Cap on the summary's output tokens. |
 | `contextLimit` | number | `131072` | Fallback window if the provider reports none. |
 | `autoResume` | boolean | `true` | Send a continue turn after the summary so the cut applies at once. Set `false` to wait for the next human message. |
 | `resumePrompt` | string | `Continue from where you left off.` | The turn sent when `autoResume` fires. |
 | `abortOnTrip` | boolean | `true` | Abort the running turn on trip so a long turn can't overshoot. |
 | `abortSettleMs` | number | `300` | Delay after aborting before sending the summary. |
-| `disablePrune` | boolean | `true` | Force `compaction.prune = false`. |
+| `disablePrune` | boolean | `true` | Force `compaction.prune = false`. **(V1 only — V2's config has no `compaction.prune`.)** |
 | `debug` | boolean | `false` | Verbose logging to OpenCode's log (`service: cache-compact`). |
 
 ## 🔧 How it works
@@ -94,7 +123,8 @@ The boundary message is reused as the carrier of the summary text, so the model 
 - The first request after a cut still prefills the system prompt, tool schemas and summary, since that becomes the new shared prefix. Keep summaries short and tool sets lean.
 - If the model returns no summary text, the plugin does not cut and retries after a cooldown rather than cutting to nothing.
 - The cut boundary is kept in memory; restarting OpenCode simply means it won't cut until the next trip.
-- `experimental.chat.messages.transform` is an experimental OpenCode hook.
+- On V1 the cut uses the experimental `experimental.chat.messages.transform` hook; on V2 it uses the stable `session` `"context"` hook.
+- V1 support starts at OpenCode 1.18.29 (the release that accepts the dual object entrypoint).
 
 ## 💻 Develop
 
@@ -108,13 +138,17 @@ npm run test:e2e    # end-to-end: real `opencode serve` + a mock model server
 ### Layout
 
 ```
+index.ts       # V2 directory entry — re-exports src/index.ts (V2 probes <dir>/index)
 src/
 ├── index.ts     # plugin entry — exports the default plugin and nothing else
-├── plugin.ts    # implementation: threshold watch, summary turn, cut, resume
+├── plugin.ts    # V1 adapter + dual default export (options, V1 hooks, host mapping)
+├── engine.ts    # shared state machine: trip, summarize, resume, cut decision
+├── v2.ts        # V2 adapter: setup(ctx), event subscription, context hook
 └── cut.ts       # pure: rewrite a message list down to the summary
 test/
 ├── cut.test.ts     # the pure slicing logic
 ├── index.test.ts   # the plugin hooks with a mock client
+├── v2.test.ts      # the V2 adapter with a mock plugin context
 └── e2e.test.ts     # real opencode + mock model (opt-in)
 ```
 

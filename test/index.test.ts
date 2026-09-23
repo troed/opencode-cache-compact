@@ -234,6 +234,61 @@ test("caps summary output and lowers reasoning effort while summarizing", async 
   assert.equal(output.maxOutputTokens, 500)
   assert.equal(output.options.reasoningEffort, "low")
 
+  const preset = { maxOutputTokens: 100, options: { reasoningEffort: "high" } as Record<string, any> }
+  await hooks["chat.params"]!({ sessionID: "s1" } as any, preset as any)
+  assert.equal(preset.maxOutputTokens, 100, "an existing smaller cap is preserved")
+  assert.equal(preset.options.reasoningEffort, "high", "a preset reasoning effort is preserved")
+
   release()
   await settle()
+})
+
+test("does not act on models outside the allow-list", async () => {
+  const calls: Call[] = []
+  const hooks = createServer({ client: makeClient(calls) } as any, {
+    threshold: 50,
+    models: ["other/x"],
+    abortSettleMs: 0,
+  })
+
+  // fixture reports providerID "p" / modelID "m" — not in the list
+  await hooks.event!(assistantTurn() as any)
+  await hooks.event!(idle() as any)
+  await settle()
+
+  assert.equal(prompts(calls).length, 0)
+})
+
+test("acts on models inside the allow-list", async () => {
+  const calls: Call[] = []
+  const hooks = createServer({ client: makeClient(calls) } as any, {
+    threshold: 50,
+    models: ["p/m"],
+    autoResume: false,
+    abortSettleMs: 0,
+  })
+
+  await hooks.event!(assistantTurn() as any)
+  await settle()
+
+  assert.equal(prompts(calls).length, 1)
+})
+
+test("trips when the provider list is unavailable (contextLimit fallback)", async () => {
+  const calls: Call[] = []
+  const client = makeClient(calls)
+  client.provider.list = async () => {
+    throw new Error("offline")
+  }
+  const hooks = createServer({ client } as any, {
+    threshold: 50,
+    contextLimit: 10_000,
+    autoResume: false,
+    abortSettleMs: 0,
+  })
+
+  await hooks.event!(assistantTurn() as any)
+  await settle()
+
+  assert.equal(prompts(calls).length, 1)
 })

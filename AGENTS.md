@@ -36,20 +36,24 @@ in the other repo; do not add deployment files here.
 
 | Thing | Why |
 |---|---|
-| `src/index.ts` exports **only** the default plugin | OpenCode registers every function export as its own plugin. Extra value exports duplicate the plugin; a non-plugin export crashes the hook dispatcher. Put everything in `src/plugin.ts`. |
+| `src/index.ts` exports **only** the default plugin | OpenCode registers every function export as its own plugin. Extra value exports duplicate the plugin; a non-plugin export crashes the hook dispatcher. Put shared logic in `src/engine.ts`; version-specific code in the adapters (`src/plugin.ts`, `src/v2.ts`). |
 | State lives in module scope (`shared`) | OpenCode may instantiate the plugin more than once; copies must share one registry. `__resetSharedState()` exists for tests. |
 | Trigger on completed assistant messages, and abort | `session.idle` only fires at the end of a whole turn; a long agentic turn would overshoot. |
-| The cut runs in `experimental.chat.messages.transform` | The session must not be mutated; the boundary user turn is rewritten to carry the summary. |
+| The cut runs in the request-time message hook (V1 `experimental.chat.messages.transform` / V2 `ctx.session.hook("context")`) | The session must not be mutated; the boundary user turn is rewritten to carry the summary. |
+| The default export is the dual object `{ id, setup, server }` — both halves always travel together | V1's object detector arms on `id` alone (`id` without `server` throws); a function default never runs on V2. |
 | Empty summary ⇒ no boundary, no resume | Never cut to nothing. |
 | `disablePrune` defaults true | Pruning invalidates the cached prefix this plugin exists to keep. |
 
 ## Layout
 
 ```
+index.ts         # V2 directory entry — re-exports ./src/index.ts (V2 probes <dir>/index)
 src/index.ts     # entry: `export { default } from "./plugin.ts"` — nothing else
-src/plugin.ts    # all implementation (options, hooks, trip/summarize/resume)
+src/plugin.ts    # V1 adapter: options, V1 hooks, host mapping (wraps engine)
+src/engine.ts    # shared state machine + Host seam (V1/V2 adapters wrap it)
+src/v2.ts        # V2 adapter: setup(ctx) — events, context hook, ctx-based host
 src/cut.ts       # pure message-list slicing (tested in isolation)
-test/            # cut.test.ts, index.test.ts, e2e.test.ts
+test/            # cut.test.ts, index.test.ts, v2.test.ts, e2e.test.ts
 ```
 
 ## Commands
